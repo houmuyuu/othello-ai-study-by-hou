@@ -81,7 +81,10 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # ビルドに時間がかかるので、後のステップで失敗してもビルド結果のキャッシュは保存する
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Build
         env:

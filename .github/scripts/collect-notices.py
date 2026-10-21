@@ -43,6 +43,8 @@ def notice_files(package):
 
 
 def main():
+    # Windows では標準の文字コードが UTF-8 ではない（cp1252 など）ため、出力も cargo metadata の読み取りも UTF-8 に固定する
+    sys.stdout.reconfigure(encoding="utf-8")
     if len(sys.argv) < 2:
         sys.exit(__doc__)
     output = Path(sys.argv[1])
@@ -51,7 +53,7 @@ def main():
             ["cargo", "metadata", "--format-version", "1", *sys.argv[2:]],
             check=True,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
         ).stdout
     )
 
