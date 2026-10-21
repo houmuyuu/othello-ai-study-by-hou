@@ -60,5 +60,5 @@ MCTS では思考時間（既定は 1 手 5 秒）や評価関数などを設定
 
 配布用の zip には、次のものも含まれています。これらはこのプロジェクトのライセンスの対象外で、それぞれのライセンスに従います。
 
-- `nvrtc64_*.dll`、`nvrtc-builtins64_*.dll`：NVIDIA の CUDA Toolkit の再配布可能なファイル（NVRTC）。NVIDIA のライセンス（同梱の `NVRTC_LICENSE.txt`）に従います
+- `nvrtc64_*.dll`、`nvrtc-builtins64_*.dll`、`cuda/nvvm/libdevice/libdevice.10.bc`：NVIDIA の CUDA Toolkit の再配布可能なファイル（NVRTC と libdevice）。NVIDIA のライセンス（同梱の `NVIDIA_CUDA_LICENSE.txt`）に従います
 - `othello.exe` に組み込まれているライブラリ：それぞれのライセンスに従います（一覧とライセンス文は同梱の `THIRD_PARTY_LICENSES.html`、Apache License 2.0 で同梱が必要な NOTICE は `THIRD_PARTY_NOTICES.txt`）

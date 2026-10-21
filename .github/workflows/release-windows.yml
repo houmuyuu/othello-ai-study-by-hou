@@ -1,8 +1,11 @@
 # Windows 向け（GPU 対応）のビルドと配布
 #
 # - CUDA 対応（--features cuda）でビルドする。CUDA Toolkit は不要（ライブラリは実行時に読み込む）。
-# - 実行時に必要な NVRTC の DLL を NVIDIA の再配布用アーカイブから取得し、exe と一緒に zip にする
-#   （NVRTC は CUDA Toolkit EULA の Attachment A で再配布が認められている。ライセンス文も同梱する）。
+# - 実行時に必要な CUDA のファイルを NVIDIA の再配布用アーカイブから取得し、exe と一緒に zip にする
+#   （どちらも CUDA Toolkit EULA の Attachment A で再配布が認められている。ライセンス文も同梱する）。
+#   - NVRTC の DLL：GPU のカーネルのコンパイルに使う
+#   - libdevice（cuda/nvvm/libdevice/libdevice.10.bc）：カーネルの数学関数（exp など）の実装。
+#     CUDA Toolkit のない PC でも GPU を使えるよう同梱し、アプリが起動時にこれを使うよう設定する
 # - 同梱の学習済みモデル（models/large.bpk）も zip に入れる。GUI は既定でこれを読み込む。
 # - ライセンス：このプロジェクトのライセンス文（LICENSE-MIT、LICENSE-APACHE）と、exe に組み込まれるライブラリの
 #   ライセンス表示（cargo-about で作る THIRD_PARTY_LICENSES.html。設定は about.toml）と、
@@ -104,17 +107,35 @@ jobs:
       - name: Third-party notices
         run: python .github/scripts/collect-notices.py THIRD_PARTY_NOTICES.txt --features cuda --filter-platform x86_64-pc-windows-msvc
 
-      - name: Download NVRTC
+      - name: Download CUDA redistributables
         shell: pwsh
         run: |
           $base = "https://developer.download.nvidia.com/compute/cuda/redist"
           $manifest = Invoke-RestMethod "$base/redistrib_$env:CUDA_REDIST_VERSION.json"
-          $nvrtc = $manifest.cuda_nvrtc.'windows-x86_64'
-          Invoke-WebRequest "$base/$($nvrtc.relative_path)" -OutFile nvrtc.zip
-          $hash = (Get-FileHash nvrtc.zip -Algorithm SHA256).Hash.ToLower()
-          if ($hash -ne $nvrtc.sha256) { throw "NVRTC のチェックサムが一致しません: $hash" }
-          Expand-Archive nvrtc.zip -DestinationPath nvrtc
-          Invoke-WebRequest "$base/$($manifest.cuda_nvrtc.license_path)" -OutFile NVRTC_LICENSE.txt
+          # 再配布用アーカイブを取得してチェックサムを確かめる
+          function Get-Component($name) {
+            $entry = $manifest.$name.'windows-x86_64'
+            Invoke-WebRequest "$base/$($entry.relative_path)" -OutFile "$name.zip"
+            $hash = (Get-FileHash "$name.zip" -Algorithm SHA256).Hash.ToLower()
+            if ($hash -ne $entry.sha256) { throw "$name のチェックサムが一致しません: $hash" }
+            Invoke-WebRequest "$base/$($manifest.$name.license_path)" -OutFile "$name-LICENSE.txt"
+          }
+          # NVRTC（DLL）
+          Get-Component cuda_nvrtc
+          Expand-Archive cuda_nvrtc.zip -DestinationPath nvrtc
+          # libdevice は nvcc のアーカイブ（127 MB）に含まれるので、そのファイルだけを取り出す
+          Get-Component cuda_nvcc
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead("$PWD/cuda_nvcc.zip")
+          $entry = $zip.Entries | Where-Object { $_.FullName -like "*/nvvm/libdevice/libdevice.10.bc" } | Select-Object -First 1
+          if (-not $entry) { throw "libdevice.10.bc が見つかりません" }
+          [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, "$PWD/libdevice.10.bc")
+          $zip.Dispose()
+          # 2 つのライセンス（どちらも CUDA Toolkit EULA）が同じであることを確かめ、1 つにまとめる
+          if ((Get-FileHash cuda_nvrtc-LICENSE.txt).Hash -ne (Get-FileHash cuda_nvcc-LICENSE.txt).Hash) {
+            throw "NVRTC と nvcc のライセンスが異なります。両方を同梱するよう変更してください"
+          }
+          Copy-Item cuda_nvrtc-LICENSE.txt NVIDIA_CUDA_LICENSE.txt
 
       - name: Package
         shell: pwsh
@@ -127,7 +148,10 @@ jobs:
           $dlls = Get-ChildItem nvrtc -Recurse -Filter "nvrtc*.dll" | Where-Object { $_.Name -notlike "*.alt.dll" }
           if ($dlls.Count -eq 0) { throw "NVRTC の DLL が見つかりません" }
           $dlls | Copy-Item -Destination $out
-          Copy-Item NVRTC_LICENSE.txt $out
+          # libdevice（exe からの相対パス cuda/nvvm/libdevice/ に置く。アプリはここを探す）
+          New-Item -ItemType Directory "$out/cuda/nvvm/libdevice" | Out-Null
+          Copy-Item libdevice.10.bc "$out/cuda/nvvm/libdevice/"
+          Copy-Item NVIDIA_CUDA_LICENSE.txt $out
           # このプロジェクトと、exe に組み込まれるライブラリのライセンス
           Copy-Item LICENSE-MIT, LICENSE-APACHE, THIRD_PARTY_LICENSES.html, THIRD_PARTY_NOTICES.txt $out
           # 同梱モデル（GUI の既定のパス models/large.bpk。exe の場所からの相対パスで読み込まれる）

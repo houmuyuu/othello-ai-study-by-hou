@@ -39,6 +39,40 @@ impl InferenceDevice {
 
 static DEVICE: OnceLock<InferenceDevice> = OnceLock::new();
 
+/// 配布物に同梱する CUDA のファイルのディレクトリ（exe と同じディレクトリからの相対パス）
+pub const BUNDLED_CUDA_DIR: &str = "cuda";
+
+/// CUDA Toolkit のディレクトリから見た libdevice の場所
+const LIBDEVICE: &str = "nvvm/libdevice/libdevice.10.bc";
+
+/// GPU のカーネルのコンパイル（cubecl の LLVM の経路）では、exp などの数学関数に CUDA Toolkit の libdevice を使う。
+/// 環境変数 CUDA_PATH か既定の場所の Toolkit に libdevice がなければ、配布物に同梱した libdevice
+/// （exe と同じディレクトリの `cuda/nvvm/libdevice/libdevice.10.bc`）を使うよう CUDA_PATH を設定する。
+///
+/// # Safety
+/// 環境変数を書き換えるため、他のスレッドが動き出す前（`main` の最初）に呼ぶこと。
+pub unsafe fn use_bundled_libdevice() {
+    use std::path::Path;
+
+    let has_libdevice = |root: &Path| root.join(LIBDEVICE).is_file();
+    match std::env::var_os("CUDA_PATH") {
+        Some(path) if has_libdevice(Path::new(&path)) => return,
+        // CUDA_PATH がなければ、cubecl は既定の場所（Linux の /usr/local/cuda など）を探す
+        None if ["/usr/local/cuda", "/opt/cuda", "/usr/lib/cuda", "/usr"].iter().any(|r| has_libdevice(Path::new(r))) => {
+            return;
+        }
+        _ => {}
+    }
+    let bundled = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(BUNDLED_CUDA_DIR)))
+        .filter(|dir| has_libdevice(dir));
+    if let Some(dir) = bundled {
+        // SAFETY: 呼び出し側が、他のスレッドが動き出す前に呼ぶことを保証する
+        unsafe { std::env::set_var("CUDA_PATH", dir) };
+    }
+}
+
 /// GPU で推論するとき、1 スレッドが 1 回の推論にまとめる葉の数の既定値。
 /// GPU は 1 回の推論にかかる固定のコストが大きく、まとめるほど速い（32 スレッドで 1 → 32 にすると反復回数が約 15 倍）。
 pub const GPU_BATCH_PER_THREAD: u32 = 32;

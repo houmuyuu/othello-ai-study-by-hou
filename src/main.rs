@@ -4,6 +4,8 @@
 use othello::gui::OthelloApp;
 
 fn main() -> eframe::Result {
+    // SAFETY: 他のスレッドを起動する前に呼んでいる
+    unsafe { othello::nn::use_bundled_libdevice() };
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(format!("オセロ v{}", othello::VERSION))
