@@ -1,0 +1,160 @@
+# Windows 向け（GPU 対応）のビルドと配布
+#
+# - CUDA 対応（--features cuda）でビルドする。CUDA Toolkit は不要（ライブラリは実行時に読み込む）。
+# - 実行時に必要な NVRTC の DLL を NVIDIA の再配布用アーカイブから取得し、exe と一緒に zip にする
+#   （NVRTC は CUDA Toolkit EULA の Attachment A で再配布が認められている。ライセンス文も同梱する）。
+# - 同梱の学習済みモデル（models/large.bpk）も zip に入れる。GUI は既定でこれを読み込む。
+# - ライセンス：このプロジェクトのライセンス文（LICENSE-MIT、LICENSE-APACHE）と、exe に組み込まれるライブラリの
+#   ライセンス表示（cargo-about で作る THIRD_PARTY_LICENSES.html。設定は about.toml）と、
+#   Apache-2.0 で同梱が必要な NOTICE（THIRD_PARTY_NOTICES.txt）も zip に入れる。
+# - GPU（NVIDIA ドライバ）がない PC では自動で CPU 推論になる。
+#
+# main ブランチへのマージ（push）ごとに、build-<実行番号> のタグでリリースを作って zip を添付する。
+#
+# 前回のリリース以降の変更が models/ だけなら、ビルドせずに前回のリリースの zip のモデルだけを差し替える
+# （Windows でのビルドは時間がかかるため）。それ以外の変更があれば、または前回のリリースがなければ、ビルドする。
+
+name: Release (Windows)
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+env:
+  # 同梱する NVRTC のバージョン（redistrib_<版>.json がある版）。
+  # 12.x の NVRTC の DLL 名は nvrtc64_120_0.dll。RTX 50 シリーズ（Blackwell）には 12.8 以降が必要。
+  CUDA_REDIST_VERSION: "12.9.1"
+  # cudarc が読み込む DLL 名を決める CUDA のバージョン（上と合わせる。12.9 → 12090）
+  CUDARC_CUDA_VERSION: "12090"
+  PACKAGE: othello-windows-x64
+
+jobs:
+  # 前回のリリースからの変更を調べ、ビルドが必要か決める
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      model_only: ${{ steps.check.outputs.model_only }}
+      previous_tag: ${{ steps.check.outputs.previous_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          previous_tag=$(gh release view --json tagName --jq .tagName 2>/dev/null || true)
+          if [ -n "$previous_tag" ]; then
+            echo "前回のリリース $previous_tag からの変更:"
+            git diff --name-only "$previous_tag" "$GITHUB_SHA" || true
+          else
+            echo "前回のリリースがないので、ビルドする"
+          fi
+          # 前回のリリースがない（比較元が空）場合は false になる
+          model_only=$(bash .github/scripts/model-only.sh "$previous_tag" "$GITHUB_SHA")
+          echo "model_only=$model_only" >> "$GITHUB_OUTPUT"
+          echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
+
+  # コードに変更がある場合：ビルドして zip を作る
+  build:
+    needs: changes
+    if: needs.changes.outputs.model_only != 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        run: cargo build --release --features cuda --bin othello
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.2
+
+      # exe に組み込まれるライブラリのライセンス表示（about.toml の accepted にないライセンスがあれば失敗する）
+      - name: Third-party licenses
+        run: cargo about generate --features cuda about.hbs -o THIRD_PARTY_LICENSES.html
+
+      # NOTICE ファイルを含むライブラリの NOTICE（Apache-2.0 第 4 条 (d)。cargo-about には含まれない）
+      - name: Third-party notices
+        run: python .github/scripts/collect-notices.py THIRD_PARTY_NOTICES.txt --features cuda --filter-platform x86_64-pc-windows-msvc
+
+      - name: Download NVRTC
+        shell: pwsh
+        run: |
+          $base = "https://developer.download.nvidia.com/compute/cuda/redist"
+          $manifest = Invoke-RestMethod "$base/redistrib_$env:CUDA_REDIST_VERSION.json"
+          $nvrtc = $manifest.cuda_nvrtc.'windows-x86_64'
+          Invoke-WebRequest "$base/$($nvrtc.relative_path)" -OutFile nvrtc.zip
+          $hash = (Get-FileHash nvrtc.zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne $nvrtc.sha256) { throw "NVRTC のチェックサムが一致しません: $hash" }
+          Expand-Archive nvrtc.zip -DestinationPath nvrtc
+          Invoke-WebRequest "$base/$($manifest.cuda_nvrtc.license_path)" -OutFile NVRTC_LICENSE.txt
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = $env:PACKAGE
+          New-Item -ItemType Directory $out | Out-Null
+          Copy-Item target/release/othello.exe $out
+          # nvrtc64_120_0.dll と、それが読み込む nvrtc-builtins64_*.dll
+          $dlls = Get-ChildItem nvrtc -Recurse -Filter "nvrtc*.dll"
+          if ($dlls.Count -eq 0) { throw "NVRTC の DLL が見つかりません" }
+          $dlls | Copy-Item -Destination $out
+          Copy-Item NVRTC_LICENSE.txt $out
+          # このプロジェクトと、exe に組み込まれるライブラリのライセンス
+          Copy-Item LICENSE-MIT, LICENSE-APACHE, THIRD_PARTY_LICENSES.html, THIRD_PARTY_NOTICES.txt $out
+          # 同梱モデル（GUI の既定のパス models/large.bpk。exe の場所からの相対パスで読み込まれる）
+          New-Item -ItemType Directory "$out/models" | Out-Null
+          Copy-Item models/large.bpk "$out/models/"
+          Get-ChildItem -Recurse $out | Select-Object FullName, Length
+          Compress-Archive $out "$out.zip"
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Build ${{ github.run_number }} (${{ github.sha }})"
+          target_commitish: ${{ github.sha }}
+          body: "コミット ${{ github.sha }} からビルド。"
+          files: ${{ env.PACKAGE }}.zip
+
+  # モデルだけの変更の場合：前回のリリースの zip のモデルを差し替える
+  update-model:
+    needs: changes
+    if: needs.changes.outputs.model_only == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Replace model in previous package
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PREVIOUS_TAG: ${{ needs.changes.outputs.previous_tag }}
+        run: |
+          gh release download "$PREVIOUS_TAG" --pattern "$PACKAGE.zip" --dir previous
+          unzip -q "previous/$PACKAGE.zip" -d previous
+          test -f "previous/$PACKAGE/othello.exe" || { echo "前回の zip の構成が想定と異なります"; exit 1; }
+          # exe と同じくライセンス表示も前回のものをそのまま使う（exe に組み込まれたライブラリは変わらないため）
+          for f in THIRD_PARTY_LICENSES.html THIRD_PARTY_NOTICES.txt; do
+            test -f "previous/$PACKAGE/$f" || { echo "前回の zip に $f がありません。コードを変更してビルドし直してください"; exit 1; }
+          done
+          cp models/large.bpk "previous/$PACKAGE/models/large.bpk"
+          (cd previous && zip -qr "../$PACKAGE.zip" "$PACKAGE")
+          unzip -l "$PACKAGE.zip"
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Build ${{ github.run_number }} (${{ github.sha }})"
+          target_commitish: ${{ github.sha }}
+          body: "モデルのみ更新（コミット ${{ github.sha }}）。exe と DLL は ${{ needs.changes.outputs.previous_tag }} と同じ。"
+          files: ${{ env.PACKAGE }}.zip

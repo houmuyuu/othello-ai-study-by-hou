@@ -1,0 +1,45 @@
+// For format details, see https://aka.ms/devcontainer.json. For config options, see the
+// README at: https://github.com/devcontainers/templates/tree/main/src/rust
+{
+	"name": "Rust",
+	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
+	"image": "mcr.microsoft.com/devcontainers/rust:2-1-trixie",
+	"features": {
+		"ghcr.io/devcontainers/features/nvidia-cuda:3": {"installToolkit":"true","installCudnn":"true"},
+		"ghcr.io/devcontainers/features/node:1": {},
+		"ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {}
+	},
+	"overrideFeatureInstallOrder": [
+    "ghcr.io/devcontainers/features/node",
+    "ghcr.io/anthropics/devcontainer-features/claude-code"
+  	],
+	"runArgs": ["--device", "nvidia.com/gpu=all","--security-opt=label=disable",
+    "--env=LD_LIBRARY_PATH=/host-wsl/lib:/usr/local/cuda/lib64",
+    "--volume=/usr/lib/wsl/lib:/host-wsl/lib:ro",
+    "--volume=/usr/lib/wsl/drivers:/host-wsl/drivers:ro"],
+	"postCreateCommand": "rustup target add x86_64-pc-windows-gnu && sudo apt-get update && sudo apt-get install -y mingw-w64 && claude plugin install superpowers --marketplace anthropics/claude-plugins-official --scope project",
+
+	// Use 'mounts' to make the cargo cache persistent in a Docker Volume.
+	// "mounts": [
+	// 	{
+	// 		"source": "devcontainer-cargo-cache-${devcontainerId}",
+	// 		"target": "/usr/local/cargo",
+	// 		"type": "volume"
+	// 	}
+	// ]
+
+	// Features to add to the dev container. More info: https://containers.dev/features.
+	// "features": {},
+
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [],
+
+	// Use 'postCreateCommand' to run commands after the container is created.
+	// "postCreateCommand": "rustc --version",
+
+	// Configure tool-specific properties.
+	// "customizations": {},
+
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	// "remoteUser": "root"
+}

@@ -1,0 +1,71 @@
+# push のたびに、ビルド・lint・テストを確認する
+#
+# - default：通常のビルド（CPU 推論）で clippy とテストを行う
+# - cuda：CUDA 対応のビルド（--features cuda。強化学習ツール rl を含む）がコンパイルできることを clippy で確認する。
+#   ランナーに GPU はないのでテストは実行しない（GPU がなければ CPU に切り替わる動作は default のテストで確認している）
+#   push の変更が models/ だけ（モデルの差し替え）なら、コードは変わらないので省略する
+#   （差し替えたモデルが読み込めることは default のテストで確認する）
+
+name: CI
+
+on:
+  push:
+
+jobs:
+  # push の変更が models/ だけか調べる
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      model_only: ${{ steps.check.outputs.model_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: check
+        env:
+          BEFORE: ${{ github.event.before }}
+        # 新しいブランチの最初の push などで比較元がない場合は false（すべて確認する）
+        run: echo "model_only=$(bash .github/scripts/model-only.sh "$BEFORE" "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+
+  default:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --release --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --release
+
+  cuda:
+    needs: changes
+    if: needs.changes.outputs.model_only != 'true'
+    runs-on: ubuntu-latest
+    env:
+      # CUDA Toolkit がなくてもビルドできるよう、cudarc が想定する CUDA のバージョンを指定する
+      CUDARC_CUDA_VERSION: "12090"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y libwayland-dev libxkbcommon-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Clippy (cuda)
+        run: cargo clippy --release --all-targets --features cuda -- -D warnings
