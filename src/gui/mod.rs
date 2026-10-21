@@ -240,6 +240,8 @@ impl OthelloApp {
             self.game.move_delay = Duration::from_secs_f64(delay);
         }
         ui.weak("設定の変更は次の手から反映されます");
+        ui.separator();
+        ui.weak(format!("バージョン v{}", crate::VERSION));
     }
 
     fn info_ui(&self, ui: &mut egui::Ui) {

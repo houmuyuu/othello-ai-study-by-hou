@@ -6,7 +6,7 @@ use othello::gui::OthelloApp;
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_title("オセロ")
+            .with_title(format!("オセロ v{}", othello::VERSION))
             .with_inner_size([1100.0, 700.0])
             .with_min_inner_size([800.0, 500.0]),
         ..Default::default()

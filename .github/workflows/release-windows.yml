@@ -9,7 +9,10 @@
 #   Apache-2.0 で同梱が必要な NOTICE（THIRD_PARTY_NOTICES.txt）も zip に入れる。
 # - GPU（NVIDIA ドライバ）がない PC では自動で CPU 推論になる。
 #
-# main ブランチへのマージ（push）ごとに、build-<実行番号> のタグでリリースを作って zip を添付する。
+# main ブランチへのマージ（push）ごとに、v<メジャー>.<マイナー>.<パッチ> のタグでリリースを作って zip を添付する。
+# パッチ番号はリリースごとに自動で 1 ずつ上がる。メジャー・マイナーは Cargo.toml の version で決まる
+# （大きな変更のときは Cargo.toml の version を手で上げる。例：0.1.x → 0.2.0。詳しくは .github/scripts/next-version.sh）。
+# バージョンは exe にも埋め込まれ、画面に表示される（環境変数 OTHELLO_VERSION）。
 #
 # 前回のリリース以降の変更が models/ だけなら、ビルドせずに前回のリリースの zip のモデルだけを差し替える
 # （Windows でのビルドは時間がかかるため）。それ以外の変更があれば、または前回のリリースがなければ、ビルドする。
@@ -23,6 +26,11 @@ on:
 permissions:
   contents: write
 
+# マージが続いても同じバージョンを 2 回作らないよう、リリースは 1 つずつ順に行う
+concurrency:
+  group: release-windows
+  cancel-in-progress: false
+
 env:
   # 同梱する NVRTC のバージョン（redistrib_<版>.json がある版）。
   # 12.x の NVRTC の DLL 名は nvrtc64_120_0.dll。RTX 50 シリーズ（Blackwell）には 12.8 以降が必要。
@@ -32,10 +40,11 @@ env:
   PACKAGE: othello-windows-x64
 
 jobs:
-  # 前回のリリースからの変更を調べ、ビルドが必要か決める
+  # 今回のバージョンを決め、前回のリリースからの変更を調べてビルドが必要か決める
   changes:
     runs-on: ubuntu-latest
     outputs:
+      version: ${{ steps.check.outputs.version }}
       model_only: ${{ steps.check.outputs.model_only }}
       previous_tag: ${{ steps.check.outputs.previous_tag }}
     steps:
@@ -56,6 +65,9 @@ jobs:
           fi
           # 前回のリリースがない（比較元が空）場合は false になる
           model_only=$(bash .github/scripts/model-only.sh "$previous_tag" "$GITHUB_SHA")
+          version=$(bash .github/scripts/next-version.sh)
+          echo "今回のバージョン: v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "model_only=$model_only" >> "$GITHUB_OUTPUT"
           echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
 
@@ -72,6 +84,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
+        env:
+          # 画面に表示するバージョン
+          OTHELLO_VERSION: ${{ needs.changes.outputs.version }}
         run: cargo build --release --features cuda --bin othello
 
       - uses: taiki-e/install-action@v2
@@ -120,8 +135,8 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: "Build ${{ github.run_number }} (${{ github.sha }})"
+          tag_name: v${{ needs.changes.outputs.version }}
+          name: v${{ needs.changes.outputs.version }}
           target_commitish: ${{ github.sha }}
           body: "コミット ${{ github.sha }} からビルド。"
           files: ${{ env.PACKAGE }}.zip
@@ -153,8 +168,8 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: build-${{ github.run_number }}
-          name: "Build ${{ github.run_number }} (${{ github.sha }})"
+          tag_name: v${{ needs.changes.outputs.version }}
+          name: v${{ needs.changes.outputs.version }}
           target_commitish: ${{ github.sha }}
-          body: "モデルのみ更新（コミット ${{ github.sha }}）。exe と DLL は ${{ needs.changes.outputs.previous_tag }} と同じ。"
+          body: "モデルのみ更新（コミット ${{ github.sha }}）。exe と DLL は ${{ needs.changes.outputs.previous_tag }} と同じため、画面に表示されるバージョンは ${{ needs.changes.outputs.previous_tag }} のまま。"
           files: ${{ env.PACKAGE }}.zip
