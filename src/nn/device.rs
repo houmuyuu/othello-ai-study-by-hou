@@ -2,6 +2,10 @@
 //!
 //! CUDA 対応（`cuda` フィーチャ）でビルドされていて GPU が使えれば GPU、そうでなければ CPU で推論する。
 //! GPU の確認（ドライバの読み込み・テスト計算）は時間がかかるため、初回の 1 回だけ行い結果を使い回す。
+//!
+//! 確認では、実際の対局と同じ構成のネットワーク・同じ大きさのバッチで推論してみる。
+//! - 簡単な計算は通るのに、ネットワークの計算（畳み込みなど）だけが失敗する GPU・ドライバでも、対局の前に CPU に切り替えられる
+//! - 初回の推論で行われるカーネルのコンパイルと自動チューニングを済ませておける（対局の最初の手が思考時間を超えない）
 
 use std::sync::OnceLock;
 
@@ -34,6 +38,10 @@ impl InferenceDevice {
 }
 
 static DEVICE: OnceLock<InferenceDevice> = OnceLock::new();
+
+/// GPU で推論するとき、1 スレッドが 1 回の推論にまとめる葉の数の既定値。
+/// GPU は 1 回の推論にかかる固定のコストが大きく、まとめるほど速い（32 スレッドで 1 → 32 にすると反復回数が約 15 倍）。
+pub const GPU_BATCH_PER_THREAD: u32 = 32;
 
 /// 推論に使うデバイス。初回の呼び出しで GPU が使えるか確認する（数秒かかることがある）。
 pub fn inference_device() -> &'static InferenceDevice {
@@ -69,6 +77,7 @@ fn detect() -> InferenceDevice {
             if y != [2.0, 4.0] {
                 return Err(format!("テスト計算の結果が不正です: {y:?}"));
             }
+            probe_network(&probe)?;
             Ok(name)
         }));
         let _ = tx.send(result.unwrap_or_else(|panic| Err(panic_message(&*panic))));
@@ -86,9 +95,28 @@ fn detect() -> InferenceDevice {
     }
 }
 
-/// GPU の確認を待つ最大時間（初回はカーネルのコンパイルがあるので余裕を持たせる）
+/// 既定の設定（スレッド数 = CPU 数、1 スレッドあたり [`GPU_BATCH_PER_THREAD`] 局面）の対局と同じ形で、
+/// 既定の構成のネットワークを推論してみる。重みは乱数でよい（カーネルは重みの値によらない）
 #[cfg(feature = "cuda")]
-const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+fn probe_network(device: &Device) -> Result<(), String> {
+    use super::features::FEATURE_LEN;
+    use super::model::{Architecture, ValueNet};
+
+    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+    let n = threads * GPU_BATCH_PER_THREAD as usize;
+    let started = std::time::Instant::now();
+    let model = ValueNet::new(Architecture::LARGE, device);
+    let values = model.predict(vec![0.0; n * FEATURE_LEN], n, device);
+    if values.len() != n || !values.iter().all(|v| v.is_finite()) {
+        return Err(format!("ネットワークの推論結果が不正です（{} 局面中 {} 件）", n, values.len()));
+    }
+    eprintln!("GPU の準備（{n} 局面の推論）: {:.1} 秒", started.elapsed().as_secs_f64());
+    Ok(())
+}
+
+/// GPU の確認を待つ最大時間（初回はカーネルのコンパイルと自動チューニングがあるので余裕を持たせる）
+#[cfg(feature = "cuda")]
+const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 
 #[cfg(feature = "cuda")]
 fn panic_message(panic: &(dyn std::any::Any + Send)) -> String {

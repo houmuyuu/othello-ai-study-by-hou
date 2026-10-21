@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::nn::device::GPU_BATCH_PER_THREAD;
 use crate::nn::{inference_device, load_evaluator};
 use crate::ai::{
     Ai, Evaluator, Mcts, MctsConfig, ParallelMode, PlayoutEvaluator, PositionalEvaluator, RandomAi, SearchLimit,
@@ -74,10 +75,10 @@ pub struct MctsParams {
 
 /// NN 評価時の、1 スレッドが 1 回の推論にまとめる葉の数の自動設定値。
 ///
-/// GPU は 1 回の推論にかかる固定のコストが大きく、まとめるほど速い（32 スレッドで K=1 → 32 で反復回数が約 15 倍）。
+/// GPU は [`GPU_BATCH_PER_THREAD`]（推論デバイスの確認もこの大きさで行う）。
 /// CPU は小さなモデルなら K=4 前後で 2 倍ほど速くなるが、大きなモデル（resnet）では逆に遅くなるため 1 にする。
 pub fn auto_nn_batch_size(is_gpu: bool) -> u32 {
-    if is_gpu { 32 } else { 1 }
+    if is_gpu { GPU_BATCH_PER_THREAD } else { 1 }
 }
 
 /// この PC の論理 CPU 数（スレッド数の上限・初期値に使う）

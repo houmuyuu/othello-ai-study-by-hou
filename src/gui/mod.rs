@@ -172,7 +172,7 @@ fn device_ui(ui: &mut egui::Ui) {
         match inference_device_if_ready() {
             None => {
                 ui.spinner();
-                ui.weak("確認中…");
+                ui.weak("確認中…（GPU の初回は準備に時間がかかります）");
             }
             Some(d) if d.is_gpu => {
                 ui.strong(&d.label);
@@ -196,7 +196,8 @@ pub struct OthelloApp {
 impl OthelloApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         fonts::install_japanese_font(&cc.egui_ctx);
-        // GPU の確認には時間がかかるので、画面を止めないよう起動時に裏で済ませておく
+        crate::panic_log::install();
+        // GPU の確認（と準備）には時間がかかるので、画面を止めないよう起動時に裏で済ませておく
         let probe_ctx = cc.egui_ctx.clone();
         std::thread::spawn(move || {
             inference_device();

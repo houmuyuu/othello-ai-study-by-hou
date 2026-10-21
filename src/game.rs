@@ -209,12 +209,14 @@ impl Game {
                     }
                 }
                 Err(TryRecvError::Empty) => return,
-                // 思考スレッドが異常終了した場合は一時停止しておく（AI は次の手で作り直される）
+                // 思考スレッドが異常終了した場合は、原因を表示して一時停止しておく（AI は次の手で作り直される）
                 Err(TryRecvError::Disconnected) => {
                     let color = thinking.color;
                     self.thinking = None;
                     self.ais[color_index(color)] = None;
                     self.status = Status::Paused;
+                    let reason = crate::panic_log::take().unwrap_or_else(|| "不明なエラー".to_string());
+                    self.error = Some(format!("AI の思考中にエラーが発生したため一時停止しました: {reason}"));
                     return;
                 }
             }
@@ -248,6 +250,8 @@ impl Game {
             return;
         }
         let Some(mut ai) = self.take_ai(color, player) else { return };
+        // 以前の（この思考と関係のない）panic の記録を消しておく
+        let _ = crate::panic_log::take();
         let (tx, rx) = mpsc::channel();
         let board = self.board;
         let waker = waker.clone();
