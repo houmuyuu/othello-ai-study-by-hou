@@ -40,7 +40,6 @@ env:
   CUDA_REDIST_VERSION: "12.9.1"
   # cudarc が読み込む DLL 名を決める CUDA のバージョン（上と合わせる。12.9 → 12090）
   CUDARC_CUDA_VERSION: "12090"
-  PACKAGE: othello-windows-x64
 
 jobs:
   # 今回のバージョンを決め、前回のリリースからの変更を調べてビルドが必要か決める
@@ -48,6 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.check.outputs.version }}
+      # 配布物のフォルダ名と zip のファイル名（拡張子なし。例：othello-v1.0.3-windows-x64）
+      package: ${{ steps.check.outputs.package }}
       model_only: ${{ steps.check.outputs.model_only }}
       previous_tag: ${{ steps.check.outputs.previous_tag }}
     steps:
@@ -71,6 +72,7 @@ jobs:
           version=$(bash .github/scripts/next-version.sh)
           echo "今回のバージョン: v$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "package=othello-v$version-windows-x64" >> "$GITHUB_OUTPUT"
           echo "model_only=$model_only" >> "$GITHUB_OUTPUT"
           echo "previous_tag=$previous_tag" >> "$GITHUB_OUTPUT"
 
@@ -79,6 +81,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.model_only != 'true'
     runs-on: windows-latest
+    env:
+      PACKAGE: ${{ needs.changes.outputs.package }}
     steps:
       - uses: actions/checkout@v4
 
@@ -174,6 +178,8 @@ jobs:
     needs: changes
     if: needs.changes.outputs.model_only == 'true'
     runs-on: ubuntu-latest
+    env:
+      PACKAGE: ${{ needs.changes.outputs.package }}
     steps:
       - uses: actions/checkout@v4
 
@@ -182,15 +188,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PREVIOUS_TAG: ${{ needs.changes.outputs.previous_tag }}
         run: |
-          gh release download "$PREVIOUS_TAG" --pattern "$PACKAGE.zip" --dir previous
-          unzip -q "previous/$PACKAGE.zip" -d previous
-          test -f "previous/$PACKAGE/othello.exe" || { echo "前回の zip の構成が想定と異なります"; exit 1; }
+          # 前回の zip（名前に前回のバージョンを含む。バージョンを含まない古い名前 othello-windows-x64.zip にも対応）
+          gh release download "$PREVIOUS_TAG" --pattern "othello-*windows-x64.zip" --dir previous
+          zips=(previous/*.zip)
+          [ "${#zips[@]}" -eq 1 ] || { echo "前回のリリースの zip が 1 つに決まりません: ${zips[*]}"; exit 1; }
+          unzip -q "${zips[0]}" -d previous/extracted
+          # 前回のフォルダを今回のバージョンの名前にする
+          exe=$(find previous/extracted -name othello.exe | head -n 1)
+          [ -n "$exe" ] || { echo "前回の zip の構成が想定と異なります"; exit 1; }
+          mv "$(dirname "$exe")" "$PACKAGE"
           # exe と同じくライセンス表示も前回のものをそのまま使う（exe に組み込まれたライブラリは変わらないため）
           for f in THIRD_PARTY_LICENSES.html THIRD_PARTY_NOTICES.txt; do
-            test -f "previous/$PACKAGE/$f" || { echo "前回の zip に $f がありません。コードを変更してビルドし直してください"; exit 1; }
+            test -f "$PACKAGE/$f" || { echo "前回の zip に $f がありません。コードを変更してビルドし直してください"; exit 1; }
           done
-          cp models/large.bpk "previous/$PACKAGE/models/large.bpk"
-          (cd previous && zip -qr "../$PACKAGE.zip" "$PACKAGE")
+          cp models/large.bpk "$PACKAGE/models/large.bpk"
+          zip -qr "$PACKAGE.zip" "$PACKAGE"
           unzip -l "$PACKAGE.zip"
 
       - name: Release

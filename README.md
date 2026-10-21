@@ -22,7 +22,7 @@ NN の推論は、NVIDIA の GPU が使えれば GPU、使えなければ CPU �
 
 ### ダウンロード（Windows）
 
-[Releases](../../releases) から最新の `othello-windows-x64.zip` をダウンロードして展開し、`othello.exe` を起動します。
+[Releases](../../releases) から最新の `othello-v<バージョン>-windows-x64.zip`（例：`othello-v1.0.3-windows-x64.zip`）をダウンロードして展開し、`othello.exe` を起動します。
 
 - NVIDIA の GPU がある場合は、ドライバが入っていれば GPU で動きます（CUDA Toolkit は不要です）
 - GPU がない PC でも、CPU で動きます
